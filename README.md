@@ -1,77 +1,92 @@
-# CNN Training Telemetry with OpenTelemetry and Grad-CAM
+# cnn\_training\_telemetry/main.py
 
-This project provides a simple example of how to observe what a CNN model is learning in real-time during training using:
+import torch
+import torch.nn as nn
+import torchvision
+import torchvision.transforms as transforms
+from torch.utils.data import DataLoader
+from torchvision.models import resnet18
+from captum.attr import LayerGradCam
+import matplotlib.pyplot as plt
+import numpy as np
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
+import os
 
-* **PyTorch** for model training
-* **Captum** for Grad-CAM visualizations
-* **OpenTelemetry** for lightweight tracing/logging
+# Setup OpenTelemetry
 
-It generates Grad-CAM heatmaps and OpenTelemetry-style span logs for select training batches.
+trace.set\_tracer\_provider(TracerProvider())
+tracer = trace.get\_tracer(**name**)
+trace.get\_tracer\_provider().add\_span\_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
 
----
+# Create output directory
 
-## 📦 Requirements
+os.makedirs("outputs", exist\_ok=True)
 
-Install the dependencies:
+# Data transforms and loader
 
-```bash
-pip install -r requirements.txt
+transform = transforms.Compose(\[
+transforms.Resize((64, 64)),
+transforms.ToTensor(),
+])
+
+train\_dataset = torchvision.datasets.FakeData(transform=transform, num\_classes=2)
+train\_loader = DataLoader(train\_dataset, batch\_size=8, shuffle=True)
+
+# Model setup
+
+model = resnet18(pretrained=False)
+model.fc = nn.Linear(model.fc.in\_features, 2)
+model.train()
+
+criterion = nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+device = torch.device("cuda" if torch.cuda.is\_available() else "cpu")
+model.to(device)
+
+# Grad-CAM setup
+
+grad\_cam = LayerGradCam(model, model.layer4\[-1])
+
+# Training loop with telemetry and Grad-CAM visualization
+
+for epoch in range(1):
+with tracer.start\_as\_current\_span(f"epoch\_{epoch}") as epoch\_span:
+for batch\_idx, (images, labels) in enumerate(train\_loader):
+with tracer.start\_as\_current\_span(f"batch\_{batch\_idx}") as batch\_span:
+images, labels = images.to(device), labels.to(device)
+outputs = model(images)
+loss = criterion(outputs, labels)
+
+```
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+            batch_span.set_attribute("loss", float(loss.item()))
+
+            if batch_idx % 10 == 0:
+                input_img = images[0].unsqueeze(0)
+                input_img.requires_grad = True
+                attr = grad_cam.attribute(input_img, target=int(labels[0]))
+                attr = attr.squeeze().cpu().detach().numpy()
+
+                input_img_np = input_img.squeeze().cpu().permute(1, 2, 0).detach().numpy()
+                input_img_np = (input_img_np - input_img_np.min()) / (input_img_np.max() - input_img_np.min())
+
+                heatmap = (attr - attr.min()) / (attr.max() - attr.min())
+
+                # Overlay heatmap on input image
+                fig, ax = plt.subplots()
+                ax.imshow(input_img_np)
+                ax.imshow(heatmap, cmap='viridis', alpha=0.5)
+                ax.set_title(f"Epoch {epoch}, Batch {batch_idx} Grad-CAM Overlay")
+                ax.axis('off')
+                plt.savefig(f"outputs/overlay_epoch{epoch}_batch{batch_idx}.png")
+                plt.close()
 ```
 
----
-
-## 🚀 Usage
-
-Run the training script with:
-
-```bash
-python main.py
-```
-
-This will:
-
-* Train a simple ResNet18 model on fake image data
-* Log loss per batch using OpenTelemetry (console output)
-* Generate Grad-CAM images every 10 batches and save them to `./outputs/`
-
-You can replace the dataset and model with your own by modifying `main.py`.
-
----
-
-## 🗂 Outputs
-
-* **Console logs**: Span traces showing batch-level loss.
-* **Grad-CAM images**: Visual explanations of what the model is focusing on (saved to `outputs/`).
-
-Example image file:
-
-```
-outputs/gradcam_epoch0_batch0.png
-```
-
----
-
-## 🔄 Customization
-
-* Swap `FakeData` with your own dataset (e.g., CIFAR10, ImageNet).
-* Replace `resnet18` with your own model.
-* Add more telemetry (e.g., learning rate changes, accuracy) using `batch_span.set_attribute()`.
-
----
-
-## 🧠 Purpose
-
-This setup mimics an OpenTelemetry-style monitoring system for deep learning, helping you visualize and understand model learning behavior as it trains.
-
-Useful for:
-
-* Debugging CNN performance
-* Educational visualization
-* Model observability research
-
----
-
-## 🔗 License
-
-MIT License
+print("Training complete. Overlay visualizations saved in ./outputs")
 

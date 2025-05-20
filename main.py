@@ -26,7 +26,7 @@ transform = transforms.Compose([
 ])
 
 # Fake dataset for testing
-train_dataset = torchvision.datasets.FakeData(transform=transform)
+train_dataset = torchvision.datasets.FakeData(transform=transform, num_classes=2)
 train_loader = DataLoader(train_dataset, batch_size=8, shuffle=True)
 
 # Load model
